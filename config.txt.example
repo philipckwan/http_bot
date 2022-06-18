@@ -1,0 +1,11 @@
+[DEFAULT]
+urlWebHost=https://booking.abc_trip.com
+endpointLogin=api/login
+endpointCheckAccess=api/check_access
+endpointBookingToken=api/booking_token
+endpointCheckAllow=api/allow_assign
+urlQueueing=https://abc_trip.queue
+
+username=12345678
+password=22446688
+clientID=abc_trip

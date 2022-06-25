@@ -42,14 +42,17 @@ linkQueueing=""
 username=""
 password=""
 clientID=""
+accessTokenOverride=""
+bookingTokenOverride=""
 
 numThreads=5
+numMaxTrials=20
 isRunThreads=True
 
 def parseConfigs():
     parser = configparser.ConfigParser()
     parser.read("config.txt")
-    global urlWebHost, linkLogin, linkCheckAccess, linkBookingToken, linkCheckAllow, linkQueueing, username, password, clientID
+    global urlWebHost, linkLogin, linkCheckAccess, linkBookingToken, linkCheckAllow, linkQueueing, username, password, clientID, accessTokenOverride, bookingTokenOverride
     urlWebHost = parser.get("DEFAULT", "urlWebHost")
     linkLogin = urlWebHost + "/" + parser.get("DEFAULT", "endpointLogin")
     linkCheckAccess = urlWebHost + "/" + parser.get("DEFAULT", "endpointCheckAccess")
@@ -59,12 +62,18 @@ def parseConfigs():
     username = parser.get("DEFAULT", "username")
     password = parser.get("DEFAULT", "password")
     clientID = parser.get("DEFAULT", "clientID")
+    accessTokenOverride = parser.get("DEFAULT", "accessTokenOverride", fallback="none")
+    bookingTokenOverride = parser.get("DEFAULT", "bookingTokenOverride", fallback="none")
     print("parseConfigs: urlWebHost:"+urlWebHost+"; linkLogin:"+linkLogin+"; linkCheckAccess:"+linkCheckAccess+";")
     print("parseConfigs: username:"+username+"; password:"+password+"; clientID:"+clientID+";")
+    print("parseConfigs: accessTokenOverride:"+accessTokenOverride+";")
+    print("parseConfigs: bookingTokenOverride:"+bookingTokenOverride+";")
     
 
 def doLogin(isWriteToFile=False):
-    #print("doLogin: START;")
+    if accessTokenOverride and len(accessTokenOverride) > 10:
+        print("doLogin: accessTokenOverride is set, will skip this action;")
+        return accessTokenOverride
     myPayload = {}
     myPayload["username"] = username
     myPayload["password"] = password
@@ -93,7 +102,10 @@ def doCheckAccess(accessToken, isWriteToFile=False):
         writeResponseToFile(respObj, "check_access")
 
 def doGetBookingToken(accessToken, isWriteToFile=False):
-    print("doGetBookingToken: START")
+    #print("doGetBookingToken: START")
+    if bookingTokenOverride and len(bookingTokenOverride) > 10:
+        print("doGetBookingToken: bookingTokenOverride is set, will skip this action;")
+        return bookingTokenOverride
     myPayload = {}
     myHeaders = {}
     myHeaders["access-token"] = accessToken
@@ -138,14 +150,19 @@ def doQueueing(bookingToken, isWriteToFile=False):
 def doScraperWithExpectStatuses(aLink, isGet, aPayload, aHeaders, expectStatusCodes=[0]):
     print("doScraperWithExpectStatuses: aLink:"+aLink+"; expectStatusCodes:"+str(expectStatusCodes)+";")
     isExpectedStatusCode = False
+    numTrials=0
     while not isExpectedStatusCode:
         scraper = cloudscraper.create_scraper()  
         if isGet:
             responseObj = scraper.get(aLink, headers=aHeaders)
         else:
             responseObj = scraper.post(aLink, json=aPayload, headers=aHeaders)
+        numTrials = numTrials + 1
         statusCode = responseObj.status_code
-        print("doScraperWithExpectStatuses: scraper got response, statusCode:"+str(statusCode)+";")
+        print("doScraperWithExpectStatuses: scraper got response, statusCode:"+str(statusCode)+"; numTrials:" + str(numTrials) + ";")
+        if numTrials >= numMaxTrials:
+            print("doScraperWithExpectStatuses: numTrials exceeds numMaxTrials, giving up...")
+            exit()
         if 0 in expectStatusCodes:
             isExpectedStatusCode = True
         else:
@@ -209,13 +226,10 @@ def runQueueThreads(numThreads, accessToken, bookingToken, delay, mode):
     print("runQueueThreads: END;")
 
 
-print("http_bot: START; v1.10;")
+print("http_bot: START; v1.11;")
 parseConfigs()
 accessToken = doLogin(True)
 print("http_bot: after doLogin(); accessToken:"+accessToken+";")
-
-doCheckAccess(accessToken, True)
-#print("http_bot: after doCheckAccess();")
 
 bookingToken = doGetBookingToken(accessToken, isWriteToFile=True)
 print("http_bot: after doGetBookingToken(); bookingToken:"+bookingToken+";")
@@ -223,7 +237,6 @@ print("http_bot: after doGetBookingToken(); bookingToken:"+bookingToken+";")
 #numPeopleAhead = doQueueing(bookingToken, True)
 #print("http_bot: after doQueueing; numPeopleAhead:"+str(numPeopleAhead)+";")
 
-#doGetAllowAssign(accessToken, True)
 
 runQueueThreads(numThreads, accessToken, bookingToken, 0, "queue")
 #runQueueThreads(numThreads, accessToken, bookingToken, 5, "keepalive")

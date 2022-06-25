@@ -9,3 +9,5 @@ urlQueueing=https://abc_trip.queue
 username=12345678
 password=22446688
 clientID=abc_trip
+accessTokenOverride=none
+bookingTokenOverride=none

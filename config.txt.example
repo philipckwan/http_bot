@@ -11,3 +11,5 @@ password=22446688
 clientID=abc_trip
 accessTokenOverride=none
 bookingTokenOverride=none
+scheduleRunTime=09:29:55
+numThreads=20

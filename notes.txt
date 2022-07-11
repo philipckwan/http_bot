@@ -1,2 +1,5 @@
 DONE(v1.11)-add configuration options to override the accessToken and bookingToken, so that if they are present in the config file, corresponding action will not need to perform
 DONE(v1.11)-add a maximum trial count so that a failing HTTP request will not keep retrying
+DONE(v1.11)-move numThreads to config file
+DONE(v1.11)-add a timer feature so that the queueing time can be scheduled
+

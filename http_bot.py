@@ -30,6 +30,7 @@ import time
 import threading
 import math
 import configparser
+from datetime import datetime
 
 #hostURL=
 urlWebHost=""
@@ -44,15 +45,16 @@ password=""
 clientID=""
 accessTokenOverride=""
 bookingTokenOverride=""
+scheduleRunTime=None
 
-numThreads=5
+numThreads=1
 numMaxTrials=20
 isRunThreads=True
 
 def parseConfigs():
     parser = configparser.ConfigParser()
     parser.read("config.txt")
-    global urlWebHost, linkLogin, linkCheckAccess, linkBookingToken, linkCheckAllow, linkQueueing, username, password, clientID, accessTokenOverride, bookingTokenOverride
+    global urlWebHost, linkLogin, linkCheckAccess, linkBookingToken, linkCheckAllow, linkQueueing, username, password, clientID, accessTokenOverride, bookingTokenOverride, scheduleRunTime, numThreads
     urlWebHost = parser.get("DEFAULT", "urlWebHost")
     linkLogin = urlWebHost + "/" + parser.get("DEFAULT", "endpointLogin")
     linkCheckAccess = urlWebHost + "/" + parser.get("DEFAULT", "endpointCheckAccess")
@@ -62,16 +64,29 @@ def parseConfigs():
     username = parser.get("DEFAULT", "username")
     password = parser.get("DEFAULT", "password")
     clientID = parser.get("DEFAULT", "clientID")
+    numThreads = int(parser.get("DEFAULT", "numThreads"))
     accessTokenOverride = parser.get("DEFAULT", "accessTokenOverride", fallback="none")
     bookingTokenOverride = parser.get("DEFAULT", "bookingTokenOverride", fallback="none")
+    scheduleRunTimeStr = parser.get("DEFAULT", "scheduleRunTime", fallback="none")
     print("parseConfigs: urlWebHost:"+urlWebHost+"; linkLogin:"+linkLogin+"; linkCheckAccess:"+linkCheckAccess+";")
     print("parseConfigs: username:"+username+"; password:"+password+"; clientID:"+clientID+";")
     print("parseConfigs: accessTokenOverride:"+accessTokenOverride+";")
     print("parseConfigs: bookingTokenOverride:"+bookingTokenOverride+";")
-    
+    print("parseConfigs: scheduleRunTimeStr:"+scheduleRunTimeStr+";")
+    print("parseConfigs: numThreads:"+str(numThreads)+";")
+
+    scheduleRunTime=datetime.now()
+    try:
+        strSplit=scheduleRunTimeStr.split(":")
+        scheduleHour=int(strSplit[0]);
+        scheduleMinute=int(strSplit[1]);
+        scheduleSecond=int(strSplit[2]);
+        scheduleRunTime=datetime.now().replace(hour=scheduleHour, minute=scheduleMinute, second=scheduleSecond)
+    except:
+        print("parseConfigs: WARN - invalid time input for scheduleRunTime, default to now.")
 
 def doLogin(isWriteToFile=False):
-    if accessTokenOverride and len(accessTokenOverride) > 10:
+    if accessTokenOverride and len(accessTokenOverride) > 5:
         print("doLogin: accessTokenOverride is set, will skip this action;")
         return accessTokenOverride
     myPayload = {}
@@ -187,7 +202,7 @@ class queueThread(threading.Thread):
         self.mode = mode
 
     def run(self):
-        print("queueThread.run: Starting " + self.name)
+        print("["+ str(datetime.now())[:-3] + "]-queueThread.run: Starting [" + self.name + "]")
         if self.mode == "queue":
             pollQueue(self.name, self.accessToken, self.bookingToken, self.delay)
         elif self.mode == "keepalive":
@@ -198,9 +213,9 @@ class queueThread(threading.Thread):
 
 def keepAlive(threadName, aToken, bToken, delay):
     while True:
-        doCheckAccess(accessToken, False)
+        doCheckAccess(aToken, False)
         #doGetAllowAssign(accessToken, True)
-        print("keepAlive: [" + time.ctime(time.time()) + "]-[" + threadName + "];")
+        print("["+ str(datetime.now())[:-3] + "]-keepAlive:[" + threadName + "];")
         if delay > 0:
             time.sleep(delay)
 
@@ -208,8 +223,8 @@ def keepAlive(threadName, aToken, bToken, delay):
 def pollQueue(threadName, aToken, bToken, delay):
     global isRunThreads
     while isRunThreads:
-        numPeopleAhead=doQueueing(bToken, True)
-        print("pollQueue: [" + time.ctime(time.time()) + "]-[" + threadName + "]; numPeopleAhead:" + str(numPeopleAhead) + ";")
+        numPeopleAhead=doQueueing(bToken, False)
+        print("["+ str(datetime.now())[:-3] + "]-pollQueue:[" + threadName + "]; numPeopleAhead:" + str(numPeopleAhead) + ";")
         if numPeopleAhead != 99999999:
             isRunThreads = False
         if delay > 0:
@@ -225,18 +240,28 @@ def runQueueThreads(numThreads, accessToken, bookingToken, delay, mode):
         qThreads[i].start()
     print("runQueueThreads: END;")
 
+def waitTillScheduledTimeBeforeContinue():
+    while datetime.now() < scheduleRunTime:
+        print("waitTillScheduledTimeAndQueue: current time:[" + str(datetime.now())[:-3] + "]; scheduled time:[" + str(scheduleRunTime)[:-3] + "], still waiting...")
+        time.sleep(1)
+    print("waitTillScheduledTimeAndQueue: current time:[" + str(datetime.now())[:-3] + "]; scheduled time:[" + str(scheduleRunTime)[:-3] + "], will continue the rest of program")
+    
+
+
 
 print("http_bot: START; v1.11;")
 parseConfigs()
+
 accessToken = doLogin(True)
 print("http_bot: after doLogin(); accessToken:"+accessToken+";")
 
 bookingToken = doGetBookingToken(accessToken, isWriteToFile=True)
 print("http_bot: after doGetBookingToken(); bookingToken:"+bookingToken+";")
 
-#numPeopleAhead = doQueueing(bookingToken, True)
-#print("http_bot: after doQueueing; numPeopleAhead:"+str(numPeopleAhead)+";")
+numPeopleAhead = doQueueing(bookingToken, True)
+print("http_bot: after doQueueing; numPeopleAhead:"+str(numPeopleAhead)+";")
 
+waitTillScheduledTimeBeforeContinue()
 
 runQueueThreads(numThreads, accessToken, bookingToken, 0, "queue")
 #runQueueThreads(numThreads, accessToken, bookingToken, 5, "keepalive")

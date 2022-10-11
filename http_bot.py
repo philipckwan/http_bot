@@ -24,13 +24,13 @@ This program depends on several third party libraries, in which it has no guaran
 """
 
 import cloudscraper
-import json
-import sys
 import time
 import threading
 import math
 import configparser
 from datetime import datetime
+import logging
+import os.path
 
 #hostURL=
 urlWebHost=""
@@ -50,6 +50,27 @@ scheduleRunTime=None
 numThreads=1
 numMaxTrials=20
 isRunThreads=True
+isRunThreadOnce=True
+
+myLog = logging.getLogger("myLogger") 
+formatter = logging.Formatter("[%(asctime)s.%(msecs)03d]-%(message)s","%Y-%m-%d %H:%M:%S")
+hdlr = logging.StreamHandler()
+hdlr.setFormatter(formatter)
+now = datetime.now()
+nowStr = now.strftime("%Y%m%d-%H%M%S")
+logDirname = "logs"
+if not os.path.exists(logDirname):
+    os.makedirs(logDirname)
+logFilename = logDirname + "/log-" + nowStr+ ".txt"
+
+fhdlr = logging.FileHandler(logFilename)
+fhdlr.setFormatter(formatter)
+myLog.addHandler(hdlr)
+myLog.addHandler(fhdlr)
+myLog.setLevel(logging.DEBUG)
+
+def log(msg):
+    myLog.debug(msg)
 
 def parseConfigs():
     parser = configparser.ConfigParser()
@@ -68,26 +89,32 @@ def parseConfigs():
     accessTokenOverride = parser.get("DEFAULT", "accessTokenOverride", fallback="none")
     bookingTokenOverride = parser.get("DEFAULT", "bookingTokenOverride", fallback="none")
     scheduleRunTimeStr = parser.get("DEFAULT", "scheduleRunTime", fallback="none")
-    print("parseConfigs: urlWebHost:"+urlWebHost+"; linkLogin:"+linkLogin+"; linkCheckAccess:"+linkCheckAccess+";")
-    print("parseConfigs: username:"+username+"; password:"+password+"; clientID:"+clientID+";")
-    print("parseConfigs: accessTokenOverride:"+accessTokenOverride+";")
-    print("parseConfigs: bookingTokenOverride:"+bookingTokenOverride+";")
-    print("parseConfigs: scheduleRunTimeStr:"+scheduleRunTimeStr+";")
-    print("parseConfigs: numThreads:"+str(numThreads)+";")
+    log("parseConfigs: urlWebHost:"+urlWebHost+"; linkLogin:"+linkLogin+"; linkCheckAccess:"+linkCheckAccess+";")
+    log("parseConfigs: username:"+username+"; password:"+password+"; clientID:"+clientID+";")
+    log("parseConfigs: accessTokenOverride:"+accessTokenOverride+";")
+    log("parseConfigs: bookingTokenOverride:"+bookingTokenOverride+";")
+    log("parseConfigs: scheduleRunTimeStr:"+scheduleRunTimeStr+";")
+    log("parseConfigs: numThreads:"+str(numThreads)+";")
 
     scheduleRunTime=datetime.now()
     try:
         strSplit=scheduleRunTimeStr.split(":")
         scheduleHour=int(strSplit[0]);
         scheduleMinute=int(strSplit[1]);
-        scheduleSecond=int(strSplit[2]);
-        scheduleRunTime=datetime.now().replace(hour=scheduleHour, minute=scheduleMinute, second=scheduleSecond)
+        strSecondAndMillisecond = strSplit[2]
+        strSplit=strSecondAndMillisecond.split(".")
+        scheduleSecond=int(strSplit[0]);
+        scheduleMicrosecond = 550000
+        if len(strSplit) > 1: 
+            scheduleMillisecond=int(strSplit[1])
+            scheduleMicrosecond=scheduleMillisecond * 1000
+        scheduleRunTime=datetime.now().replace(hour=scheduleHour, minute=scheduleMinute, second=scheduleSecond, microsecond=scheduleMicrosecond)
     except:
-        print("parseConfigs: WARN - invalid time input for scheduleRunTime, default to now.")
+        log("parseConfigs: WARN - invalid time input for scheduleRunTime, default to now.")
 
 def doLogin(isWriteToFile=False):
     if accessTokenOverride and len(accessTokenOverride) > 5:
-        print("doLogin: accessTokenOverride is set, will skip this action;")
+        log("doLogin: accessTokenOverride is set, will skip this action;")
         return accessTokenOverride
     myPayload = {}
     myPayload["username"] = username
@@ -104,22 +131,22 @@ def doLogin(isWriteToFile=False):
     return accessToken
 
 def doCheckAccess(accessToken, isWriteToFile=False):
-    print("doCheckAccess: START")
+    log("doCheckAccess: START")
     myPayload = {}
     myHeaders = {}
     myHeaders["access-token"] = accessToken
     myHeaders["content-type"] = "text/plain"
     respObj = doScraperWithExpectStatuses(linkCheckAccess, False, myPayload, myHeaders, expectStatusCodes=[200, 401])
     if respObj.status_code == 401:
-        print("doCheckAccess: WARN: status code 401 is returned, need to re-login.")
+        log("doCheckAccess: WARN: status code 401 is returned, need to re-login.")
         exit()
     if isWriteToFile:
         writeResponseToFile(respObj, "check_access")
 
 def doGetBookingToken(accessToken, isWriteToFile=False):
-    #print("doGetBookingToken: START")
+    #log("doGetBookingToken: START")
     if bookingTokenOverride and len(bookingTokenOverride) > 10:
-        print("doGetBookingToken: bookingTokenOverride is set, will skip this action;")
+        log("doGetBookingToken: bookingTokenOverride is set, will skip this action;")
         return bookingTokenOverride
     myPayload = {}
     myHeaders = {}
@@ -132,7 +159,7 @@ def doGetBookingToken(accessToken, isWriteToFile=False):
     return bookingToken
 
 def doGetAllowAssign(accessToken, isWriteToFile=False):
-    #print("doGetAllowAssign: START")
+    #log("doGetAllowAssign: START")
     myPayload = {}
     myHeaders = {}
     myHeaders["access-token"] = accessToken
@@ -141,7 +168,7 @@ def doGetAllowAssign(accessToken, isWriteToFile=False):
         writeResponseToFile(respObj, "allow_assign")
 
 def doQueueing(bookingToken, isWriteToFile=False):
-    #print("doQueueing: START")
+    #log("doQueueing: START")
     myPayload = {}
     myPayload["action"] = "beep"
     myPayload["client_id"] = clientID
@@ -153,7 +180,7 @@ def doQueueing(bookingToken, isWriteToFile=False):
     vb = respJson.get("vb")
     numPeopleAhead=99999999
     if vb is None:
-        print("doQueueing: vb is None;")
+        log("doQueueing: vb is None;")
     elif int(va) == 0:
         numPeopleAhead = 0
     elif int(vb) > 0:
@@ -163,7 +190,7 @@ def doQueueing(bookingToken, isWriteToFile=False):
     return math.ceil(numPeopleAhead)
 
 def doScraperWithExpectStatuses(aLink, isGet, aPayload, aHeaders, expectStatusCodes=[0]):
-    print("doScraperWithExpectStatuses: aLink:"+aLink+"; expectStatusCodes:"+str(expectStatusCodes)+";")
+    #log("doScraperWithExpectStatuses: aLink:"+aLink+"; expectStatusCodes:"+str(expectStatusCodes)+";")
     isExpectedStatusCode = False
     numTrials=0
     while not isExpectedStatusCode:
@@ -174,9 +201,9 @@ def doScraperWithExpectStatuses(aLink, isGet, aPayload, aHeaders, expectStatusCo
             responseObj = scraper.post(aLink, json=aPayload, headers=aHeaders)
         numTrials = numTrials + 1
         statusCode = responseObj.status_code
-        print("doScraperWithExpectStatuses: scraper got response, statusCode:"+str(statusCode)+"; numTrials:" + str(numTrials) + ";")
+        #log("doScraperWithExpectStatuses: scraper got response, statusCode:"+str(statusCode)+"; numTrials:" + str(numTrials) + ";")
         if numTrials >= numMaxTrials:
-            print("doScraperWithExpectStatuses: numTrials exceeds numMaxTrials, giving up...")
+            log("doScraperWithExpectStatuses: numTrials exceeds numMaxTrials, giving up...")
             exit()
         if 0 in expectStatusCodes:
             isExpectedStatusCode = True
@@ -186,7 +213,7 @@ def doScraperWithExpectStatuses(aLink, isGet, aPayload, aHeaders, expectStatusCo
     
 def writeResponseToFile(responseObj, suffix):
     filename="resp-" + suffix + "-" + str(responseObj.status_code) + ".json"
-    print("writeResponseToFile: filename:" + filename + "; length:" + str(len(responseObj.text)) + ";");
+    log("writeResponseToFile: filename:" + filename + "; length:" + str(len(responseObj.text)) + ";");
     f = open(filename, "w")
     f.write(responseObj.text)
     f.close()
@@ -202,20 +229,34 @@ class queueThread(threading.Thread):
         self.mode = mode
 
     def run(self):
-        print("["+ str(datetime.now())[:-3] + "]-queueThread.run: Starting [" + self.name + "]")
+        log("queueThread.run: Starting [" + self.name + "]")
         if self.mode == "queue":
             pollQueue(self.name, self.accessToken, self.bookingToken, self.delay)
         elif self.mode == "keepalive":
             keepAlive(self.name, self.accessToken, self.bookingToken, self.delay)
         else:
-            print("queueThread.run: ERROR - unknown mode:" + self.mode + ";")
-        print("queueThread.run: Exiting " + self.name)
+            log("queueThread.run: ERROR - unknown mode:" + self.mode + ";")
+        log("queueThread.run: Exiting " + self.name)
+
+class queueThreadOnce(threading.Thread):
+    def __init__(self, threadID, bookingToken):
+        threading.Thread.__init__(self)
+        self.threadID = threadID
+        self.bookingToken = bookingToken
+        
+    def run(self):
+        global isRunThreadOnce
+        log("queueThreadOnce.run:[" + str(self.threadID) + "]; starting;")
+        numPeopleAhead=doQueueing(self.bookingToken, False)
+        log("queueThreadOnce.run:[" + str(self.threadID) + "]; numPeopleAhead:" + str(numPeopleAhead) + ";")
+        if numPeopleAhead != 99999999:
+            isRunThreadOnce = False
 
 def keepAlive(threadName, aToken, bToken, delay):
     while True:
         doCheckAccess(aToken, False)
         #doGetAllowAssign(accessToken, True)
-        print("["+ str(datetime.now())[:-3] + "]-keepAlive:[" + threadName + "];")
+        log("keepAlive:[" + threadName + "];")
         if delay > 0:
             time.sleep(delay)
 
@@ -224,46 +265,58 @@ def pollQueue(threadName, aToken, bToken, delay):
     global isRunThreads
     while isRunThreads:
         numPeopleAhead=doQueueing(bToken, False)
-        print("["+ str(datetime.now())[:-3] + "]-pollQueue:[" + threadName + "]; numPeopleAhead:" + str(numPeopleAhead) + ";")
+        log("pollQueue:[" + threadName + "]; numPeopleAhead:" + str(numPeopleAhead) + ";")
         if numPeopleAhead != 99999999:
             isRunThreads = False
         if delay > 0:
             time.sleep(delay)
 
 def runQueueThreads(numThreads, accessToken, bookingToken, delay, mode):
-    print("runQueueThreads: START; numThreads:" + str(numThreads) + ";")
+    log("runQueueThreads: START; numThreads:" + str(numThreads) + ";")
     qThreads=[]
     for i in range(numThreads):
         aQThread = queueThread(i, "qTh-"+str(i), accessToken, bookingToken, delay, mode)
         qThreads.append(aQThread)
     for i in range(numThreads):
         qThreads[i].start()
-    print("runQueueThreads: END;")
+    log("runQueueThreads: END;")
+
+def runUnlimitedQueueThreadOnce(bookingToken):
+    # run unlimited number of queueThreadOnce
+    # each queueThreadOnce only queue once
+    # stop until a queueThreadOnce able to queue
+    log("runUnlimitedQueueThreadOnce: START;")
+    count = 0
+    while isRunThreadOnce:
+        count = count + 1
+        aQThreadOnce = queueThreadOnce(count, bookingToken)
+        aQThreadOnce.start()
+    log("runUnlimitedQueueThreadOnce: END;")
 
 def waitTillScheduledTimeBeforeContinue():
     while datetime.now() < scheduleRunTime:
-        print("waitTillScheduledTimeAndQueue: current time:[" + str(datetime.now())[:-3] + "]; scheduled time:[" + str(scheduleRunTime)[:-3] + "], still waiting...")
-        time.sleep(1)
-    print("waitTillScheduledTimeAndQueue: current time:[" + str(datetime.now())[:-3] + "]; scheduled time:[" + str(scheduleRunTime)[:-3] + "], will continue the rest of program")
+        log("waitTillScheduledTimeAndQueue: current time:[" + str(datetime.now())[:-3] + "]; scheduled time:[" + str(scheduleRunTime)[:-3] + "], still waiting...")
+        time.sleep(0.1)
+    log("waitTillScheduledTimeAndQueue: current time:[" + str(datetime.now())[:-3] + "]; scheduled time:[" + str(scheduleRunTime)[:-3] + "], will continue the rest of program")
     
 
-
-
-print("http_bot: START; v1.11;")
+log("http_bot: START; v1.12;")
 parseConfigs()
 
 accessToken = doLogin(True)
-print("http_bot: after doLogin(); accessToken:"+accessToken+";")
+log("http_bot: after doLogin(); accessToken:"+accessToken+";")
 
 bookingToken = doGetBookingToken(accessToken, isWriteToFile=True)
-print("http_bot: after doGetBookingToken(); bookingToken:"+bookingToken+";")
+log("http_bot: after doGetBookingToken(); bookingToken:"+bookingToken+";")
 
 numPeopleAhead = doQueueing(bookingToken, True)
-print("http_bot: after doQueueing; numPeopleAhead:"+str(numPeopleAhead)+";")
+log("http_bot: after doQueueing; numPeopleAhead:"+str(numPeopleAhead)+";")
 
 waitTillScheduledTimeBeforeContinue()
 
-runQueueThreads(numThreads, accessToken, bookingToken, 0, "queue")
-#runQueueThreads(numThreads, accessToken, bookingToken, 5, "keepalive")
+if numThreads > 0:
+    runQueueThreads(numThreads, accessToken, bookingToken, 0, "queue")
+else:
+    runUnlimitedQueueThreadOnce(bookingToken)
 
-print("http_bot: END")
+log("http_bot: END")

@@ -2,4 +2,7 @@ DONE(v1.11)-add configuration options to override the accessToken and bookingTok
 DONE(v1.11)-add a maximum trial count so that a failing HTTP request will not keep retrying
 DONE(v1.11)-move numThreads to config file
 DONE(v1.11)-add a timer feature so that the queueing time can be scheduled
+DONE(v1.12)-add logging, move current print statements to log to console and log file
+DONE(v1.12)-refine the granularity of the scheulde time from seconds to milliseconds
+DONE(v1.12)-add a new thread queuing mode that sprawns unlimited queue threads instead of fixed number of threads
 

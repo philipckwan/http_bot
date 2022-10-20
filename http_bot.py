@@ -49,6 +49,7 @@ scheduleRunTime=None
 
 numThreads=1
 numMaxTrials=20
+numScrapers=2
 isRunThreads=True
 isRunThreadOnce=True
 
@@ -75,7 +76,7 @@ def log(msg):
 def parseConfigs():
     parser = configparser.ConfigParser()
     parser.read("config.txt")
-    global urlWebHost, linkLogin, linkCheckAccess, linkBookingToken, linkCheckAllow, linkQueueing, username, password, clientID, accessTokenOverride, bookingTokenOverride, scheduleRunTime, numThreads
+    global urlWebHost, linkLogin, linkCheckAccess, linkBookingToken, linkCheckAllow, linkQueueing, username, password, clientID, accessTokenOverride, bookingTokenOverride, scheduleRunTime, numThreads, numScrapers
     urlWebHost = parser.get("DEFAULT", "urlWebHost")
     linkLogin = urlWebHost + "/" + parser.get("DEFAULT", "endpointLogin")
     linkCheckAccess = urlWebHost + "/" + parser.get("DEFAULT", "endpointCheckAccess")
@@ -86,6 +87,7 @@ def parseConfigs():
     password = parser.get("DEFAULT", "password")
     clientID = parser.get("DEFAULT", "clientID")
     numThreads = int(parser.get("DEFAULT", "numThreads"))
+    numScrapers = int(parser.get("DEFAULT", "numScrapers"))
     accessTokenOverride = parser.get("DEFAULT", "accessTokenOverride", fallback="none")
     bookingTokenOverride = parser.get("DEFAULT", "bookingTokenOverride", fallback="none")
     scheduleRunTimeStr = parser.get("DEFAULT", "scheduleRunTime", fallback="none")
@@ -95,6 +97,7 @@ def parseConfigs():
     log("parseConfigs: bookingTokenOverride:"+bookingTokenOverride+";")
     log("parseConfigs: scheduleRunTimeStr:"+scheduleRunTimeStr+";")
     log("parseConfigs: numThreads:"+str(numThreads)+";")
+    log("parseConfigs: numScrapers:"+str(numScrapers)+";")
 
     scheduleRunTime=datetime.now()
     try:
@@ -167,14 +170,14 @@ def doGetAllowAssign(accessToken, isWriteToFile=False):
     if isWriteToFile:
         writeResponseToFile(respObj, "allow_assign")
 
-def doQueueing(bookingToken, isWriteToFile=False):
+def doQueueing(bookingToken, isWriteToFile=False, idStr="", scraper=None):
     #log("doQueueing: START")
     myPayload = {}
     myPayload["action"] = "beep"
     myPayload["client_id"] = clientID
     myPayload["id"] = bookingToken
     myHeaders = {}
-    respObj = doScraperWithExpectStatuses(linkQueueing, False, myPayload, myHeaders, expectStatusCodes=[200])
+    respObj = doScraperWithExpectStatuses(linkQueueing, False, myPayload, myHeaders, expectStatusCodes=[200], idStr=idStr, scraper=scraper)
     respJson = respObj.json()
     va = respJson.get("va")
     vb = respJson.get("vb")
@@ -189,12 +192,15 @@ def doQueueing(bookingToken, isWriteToFile=False):
         writeResponseToFile(respObj, "queueing")
     return math.ceil(numPeopleAhead)
 
-def doScraperWithExpectStatuses(aLink, isGet, aPayload, aHeaders, expectStatusCodes=[0]):
+def doScraperWithExpectStatuses(aLink, isGet, aPayload, aHeaders, expectStatusCodes=[0], idStr="", scraper=None):
     #log("doScraperWithExpectStatuses: aLink:"+aLink+"; expectStatusCodes:"+str(expectStatusCodes)+";")
     isExpectedStatusCode = False
     numTrials=0
     while not isExpectedStatusCode:
-        scraper = cloudscraper.create_scraper()  
+        if scraper is None:
+            log("doScraperWithExpectStatuses: [" + idStr + "] before create_scaper;")
+            scraper = cloudscraper.create_scraper()  
+            log("doScraperWithExpectStatuses: [" + idStr + "] after create_scaper;")
         if isGet:
             responseObj = scraper.get(aLink, headers=aHeaders)
         else:
@@ -203,7 +209,7 @@ def doScraperWithExpectStatuses(aLink, isGet, aPayload, aHeaders, expectStatusCo
         statusCode = responseObj.status_code
         #log("doScraperWithExpectStatuses: scraper got response, statusCode:"+str(statusCode)+"; numTrials:" + str(numTrials) + ";")
         if numTrials >= numMaxTrials:
-            log("doScraperWithExpectStatuses: numTrials exceeds numMaxTrials, giving up...")
+            log("doScraperWithExpectStatuses: [" + idStr + "] numTrials exceeds numMaxTrials, giving up...; aLink:[" + aLink + "];")
             exit()
         if 0 in expectStatusCodes:
             isExpectedStatusCode = True
@@ -218,70 +224,76 @@ def writeResponseToFile(responseObj, suffix):
     f.write(responseObj.text)
     f.close()
     
+def initScraperPool():
+    scraperPool=[]
+    log("initScraperPool: START; numScrapers:" + str(numScrapers) + ";")
+    for i in range(numScrapers):
+        scraperPool.append(cloudscraper.create_scraper())
+    log("initScraperPool: END;")
+    return scraperPool
+
 class queueThread(threading.Thread):
-    def __init__(self, threadID, name, accessToken, bookingToken, delay, mode):
+    def __init__(self, threadID, accessToken, bookingToken, delay, mode, scraper):
         threading.Thread.__init__(self)
         self.threadID = threadID
-        self.name = name
         self.accessToken = accessToken
         self.bookingToken = bookingToken
         self.delay = delay
         self.mode = mode
+        self.scraper = scraper
 
     def run(self):
-        log("queueThread.run: Starting [" + self.name + "]")
+        log("queueThread.run:[" + str(self.threadID) + "]; START;")
         if self.mode == "queue":
-            pollQueue(self.name, self.accessToken, self.bookingToken, self.delay)
+            #pollQueue(self.name, self.accessToken, self.bookingToken, self.delay, self.scraper)
+            global isRunThreads
+            while isRunThreads:
+                numPeopleAhead=doQueueing(self.bookingToken, False, str(self.threadID), self.scraper)
+                log("queueThread.run:[" + str(self.threadID) + "]; numPeopleAhead:" + str(numPeopleAhead) + ";")
+                if numPeopleAhead != 99999999:
+                    isRunThreads = False
+                if self.delay > 0:
+                    time.sleep(self.delay)
         elif self.mode == "keepalive":
-            keepAlive(self.name, self.accessToken, self.bookingToken, self.delay)
+            #keepAlive(self.name, self.accessToken, self.bookingToken, self.delay)
+            while True:
+                doCheckAccess(self.accessToken, False)
+                log("queueThread.run:[" + str(self.threadID) + "]; keepAlive;")
+                if self.delay > 0:
+                    time.sleep(self.delay)
         else:
             log("queueThread.run: ERROR - unknown mode:" + self.mode + ";")
-        log("queueThread.run: Exiting " + self.name)
+        log("queueThread.run:[" + str(self.threadID) + "]; END;")
 
 class queueThreadOnce(threading.Thread):
-    def __init__(self, threadID, bookingToken):
+    def __init__(self, threadID, bookingToken, scraper):
         threading.Thread.__init__(self)
         self.threadID = threadID
         self.bookingToken = bookingToken
+        self.scraper = scraper
         
     def run(self):
         global isRunThreadOnce
         log("queueThreadOnce.run:[" + str(self.threadID) + "]; starting;")
-        numPeopleAhead=doQueueing(self.bookingToken, False)
+        numPeopleAhead=doQueueing(self.bookingToken, False, str(self.threadID), self.scraper)
         log("queueThreadOnce.run:[" + str(self.threadID) + "]; numPeopleAhead:" + str(numPeopleAhead) + ";")
         if numPeopleAhead != 99999999:
             isRunThreadOnce = False
 
-def keepAlive(threadName, aToken, bToken, delay):
-    while True:
-        doCheckAccess(aToken, False)
-        #doGetAllowAssign(accessToken, True)
-        log("keepAlive:[" + threadName + "];")
-        if delay > 0:
-            time.sleep(delay)
-
-
-def pollQueue(threadName, aToken, bToken, delay):
-    global isRunThreads
-    while isRunThreads:
-        numPeopleAhead=doQueueing(bToken, False)
-        log("pollQueue:[" + threadName + "]; numPeopleAhead:" + str(numPeopleAhead) + ";")
-        if numPeopleAhead != 99999999:
-            isRunThreads = False
-        if delay > 0:
-            time.sleep(delay)
-
-def runQueueThreads(numThreads, accessToken, bookingToken, delay, mode):
+def runQueueThreads(numThreads, accessToken, bookingToken, delay, mode, scraperPool):
     log("runQueueThreads: START; numThreads:" + str(numThreads) + ";")
     qThreads=[]
     for i in range(numThreads):
-        aQThread = queueThread(i, "qTh-"+str(i), accessToken, bookingToken, delay, mode)
+        scraperIdx = i % len(scraperPool)
+        log("runQueueThreads: qThread [" + str(i) + "] with scraperIdx [" + str(scraperIdx) + "];")
+        aQThread = queueThread(i, accessToken, bookingToken, delay, mode, scraperPool[scraperIdx])
         qThreads.append(aQThread)
     for i in range(numThreads):
         qThreads[i].start()
     log("runQueueThreads: END;")
 
-def runUnlimitedQueueThreadOnce(bookingToken):
+
+def runUnlimitedQueueThreadOnce(bookingToken, scraperPool):
     # run unlimited number of queueThreadOnce
     # each queueThreadOnce only queue once
     # stop until a queueThreadOnce able to queue
@@ -289,7 +301,9 @@ def runUnlimitedQueueThreadOnce(bookingToken):
     count = 0
     while isRunThreadOnce:
         count = count + 1
-        aQThreadOnce = queueThreadOnce(count, bookingToken)
+        scraperIdx = count % len(scraperPool)
+        log("runUnlimitedQueueThreadOnce: qThread [" + str(count) + "] with scraperIdx [" + str(scraperIdx) + "];")
+        aQThreadOnce = queueThreadOnce(count, bookingToken, scraperPool[scraperIdx])
         aQThreadOnce.start()
     log("runUnlimitedQueueThreadOnce: END;")
 
@@ -300,7 +314,7 @@ def waitTillScheduledTimeBeforeContinue():
     log("waitTillScheduledTimeAndQueue: current time:[" + str(datetime.now())[:-3] + "]; scheduled time:[" + str(scheduleRunTime)[:-3] + "], will continue the rest of program")
     
 
-log("http_bot: START; v1.12;")
+log("http_bot: START; v1.13;")
 parseConfigs()
 
 accessToken = doLogin(True)
@@ -312,11 +326,13 @@ log("http_bot: after doGetBookingToken(); bookingToken:"+bookingToken+";")
 numPeopleAhead = doQueueing(bookingToken, True)
 log("http_bot: after doQueueing; numPeopleAhead:"+str(numPeopleAhead)+";")
 
+scraperPool = initScraperPool()
+
 waitTillScheduledTimeBeforeContinue()
 
 if numThreads > 0:
-    runQueueThreads(numThreads, accessToken, bookingToken, 0, "queue")
+    runQueueThreads(numThreads, accessToken, bookingToken, 0, "queue", scraperPool)
 else:
-    runUnlimitedQueueThreadOnce(bookingToken)
+    runUnlimitedQueueThreadOnce(bookingToken, scraperPool)
 
 log("http_bot: END")
